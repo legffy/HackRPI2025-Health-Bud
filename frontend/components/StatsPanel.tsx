@@ -44,6 +44,8 @@ type DerivedStats = {
   energy: number; // 0–1
 };
 
+
+
 function calculateBMI(weight: number, height: number): BMIInfo {
   if (height <= 0) {
     return { value: 0, status: "Unknown" };
@@ -260,9 +262,9 @@ useEffect((): void => {
     .join("");
 
   return (
-    <div className="flex items-center justify-center border-4 border-white w-full">
+    <div className="flex items-center justify-center border-4 h-fit border-white w-full">
       {/* Left: User stats editable panel */}
-      <div className="w-full max-w-sm bg-black p-4 text-2xl space-y-2">
+      <div className="w-full max-w-sm bg-black p-4 h-full text-2xl space-y-2">
         {/* NAME */}
         {userstatsSelect.name ? (
           <div className="flex items-center justify-between">
@@ -271,7 +273,7 @@ useEffect((): void => {
               value={userstats.name}
               type="text"
               name="name"
-              className="bg-black border border-white text-white px-2 w-40"
+              className="bg-black  text-white px-2 w-40"
               onChange={(e): void => handleTextChange("name", e.target.value)}
               onBlur={(): void => closeField("name")}
             />
@@ -458,7 +460,7 @@ useEffect((): void => {
       </div>
 
       {/* Right: derived health summary panel */}
-      <div className="w-full max-w-sm border-x-2 border-white bg-black p-4 text-xl space-y-2">
+      <div className="w-full max-w-sm border-x-2 h-full border-white bg-black p-4 text-xl space-y-2">
         <div>
           <div className="flex">
             BMI: {derivedstats.bmi.value} ({derivedstats.bmi.status}){" "}

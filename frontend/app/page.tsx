@@ -33,6 +33,25 @@ type DerivedStats = {
   water: number;
   energy: number;
 };
+type HealthNeed =
+  | "get_stronger"
+  | "injury_rehab"
+  | "heart_concern"
+  | "mental_health"
+  | "std_check"
+  | "general_checkup"
+  | "nutrition"
+  | "chronic_pain";
+
+type Place = {
+  name: string;
+  address: string;
+  rating?: number;
+  userRatingsTotal?: number;
+  placeId: string;
+  types?: string[];
+  mapsUrl: string;
+};
 
 type StatsSnapshot = {
   user: UserStats;
@@ -45,12 +64,20 @@ const BOOT_LINES: string[] = [
   "INITIALIZING AI MODULE...",
   "READY."
 ];
+type ChatTurn = {
+  question: string;
+  answer: string;
+};
+
 
 export default function Home() {
   const [healthStatus, setHealthStatus] = useState<HealthStatus>("green");
   const [statsSnapshot, setStatsSnapshot] = useState<StatsSnapshot | null>(
     null
   );
+    const [turns, setTurns] = useState<ChatTurn[]>([]);
+  const [activeTurnIndex, setActiveTurnIndex] = useState<number>(-1);
+
   const [question, setQuestion] = useState<string>("");
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -63,6 +90,11 @@ export default function Home() {
   const [bootIndex, setBootIndex] = useState<number>(0);
 const [isBootDone, setIsBootDone] = useState<boolean>(false);
 const [budState, setBudState] = useState<string>("/Sleepy_Bud.png.png");
+  const [zip, setZip] = useState<string>("12180");
+  const [places, setPlaces] = useState<Place[]>([]);
+  const [lastNeed, setLastNeed] = useState<HealthNeed | null>(null);
+  const [isFindingPlaces, setIsFindingPlaces] = useState<boolean>(false);
+
 
 
   let budSprite: string = `/Pixel Art/Helper Images/Green/Green_${bud}.png.png`;
@@ -71,8 +103,14 @@ const [budState, setBudState] = useState<string>("/Sleepy_Bud.png.png");
   } else if (healthStatus === "red") {
     budSprite = `/Pixel Art/Helper Images/Red/Red_${bud}.png.png`;
   }
+    const userMessageColorClass: string =
+    healthStatus === "green"
+      ? "text-green-300"
+      : healthStatus === "yellow"
+      ? "text-yellow-300"
+      : "text-red-500";
 
-  const handleAskBud = async (
+    const handleAskBud = async (
     event: React.FormEvent<HTMLFormElement>
   ): Promise<void> => {
     event.preventDefault();
@@ -107,7 +145,7 @@ const [budState, setBudState] = useState<string>("/Sleepy_Bud.png.png");
 
     const trimmedQuestion: string = question.trim();
 
-    // 1️⃣ push user message into chat
+    // push user message into chat history (for model context)
     const newMessages: ChatMessage[] = [
       ...messages,
       { role: "user", text: trimmedQuestion },
@@ -116,13 +154,25 @@ const [budState, setBudState] = useState<string>("/Sleepy_Bud.png.png");
     setQuestion("");
     setIsLoading(true);
 
-    // 2️⃣ build convo history string for context
+    // also add a new turn with empty answer
+    setTurns((prev: ChatTurn[]): ChatTurn[] => [
+      ...prev,
+      { question: trimmedQuestion, answer: "" },
+    ]);
+    setActiveTurnIndex((prevIndex: number): number => {
+      // new turn will always be at the end
+      const newLength: number = turns.length + 1;
+      return newLength - 1;
+    });
+
     const historyText: string = newMessages
       .map((m: ChatMessage): string =>
         m.role === "user" ? `User: ${m.text}` : `Bud: ${m.text}`
       )
       .join("\n");
+
     playBlip(0);
+
     try {
       const res: Response = await fetch("http://localhost:8000/prompt", {
         method: "POST",
@@ -146,15 +196,27 @@ const [budState, setBudState] = useState<string>("/Sleepy_Bud.png.png");
         throw new Error(data.error || "Request failed");
       }
 
-      const botReply: string = data.response ?? "[Bud had nothing to say 😭]";
+      const rawReply: string = data.response ?? "[Bud had nothing to say 😭]";
+      const botReply: string = rawReply.replace(/^\s+/, ""); // fix missing-first-char issue
 
-      // 3️⃣ add Bud message
+      // keep storing full messages for context if you want
       setMessages((prev: ChatMessage[]): ChatMessage[] => [
         ...prev,
         { role: "assistant", text: botReply },
       ]);
 
-      // 4️⃣ animate the latest Bud line
+      // update the last turn's answer
+      setTurns((prev: ChatTurn[]): ChatTurn[] => {
+        if (prev.length === 0) return prev;
+        const updated: ChatTurn[] = [...prev];
+        updated[updated.length - 1] = {
+          ...updated[updated.length - 1],
+          answer: botReply,
+        };
+        return updated;
+      });
+
+      // animate answer for current turn
       startTypewriter(botReply);
     } catch (err: any) {
       console.error("AskBud error:", err);
@@ -165,11 +227,69 @@ const [budState, setBudState] = useState<string>("/Sleepy_Bud.png.png");
         ...prev,
         { role: "assistant", text: errorText },
       ]);
+
+      setTurns((prev: ChatTurn[]): ChatTurn[] => {
+        if (prev.length === 0) return prev;
+        const updated: ChatTurn[] = [...prev];
+        updated[updated.length - 1] = {
+          ...updated[updated.length - 1],
+          answer: errorText,
+        };
+        return updated;
+      });
+
       startTypewriter(errorText);
     } finally {
       setIsLoading(false);
     }
   };
+
+    const getLastUserMessage = (): string | null => {
+    for (let i: number = messages.length - 1; i >= 0; --i) {
+      if (messages[i].role === "user") {
+        return messages[i].text;
+      }
+    }
+    return null;
+  };
+  const handleFindPlaces = async (): Promise<void> => {
+    const lastUserMessage: string | null = getLastUserMessage();
+    if (!lastUserMessage) {
+      return;
+    }
+
+    setIsFindingPlaces(true);
+
+    try {
+      const res: Response = await fetch("http://localhost:8000/classifyHealthNeed", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          message: lastUserMessage,
+          zip: zip,
+        }),
+      });
+
+      const data: any = await res.json();
+
+      if (!res.ok) {
+        throw new Error(data.error || "Failed to classify or fetch places");
+      }
+
+      const need: HealthNeed = data.need;
+      const placesFromApi: Place[] = data.places ?? [];
+
+      setLastNeed(need);
+      setPlaces(placesFromApi);
+    } catch (err) {
+      console.error("handleFindPlaces error:", err);
+    } finally {
+      setIsFindingPlaces(false);
+    }
+  };
+
   useEffect(()=> {
   if (isBootDone) {
     return;
@@ -365,40 +485,70 @@ const [budState, setBudState] = useState<string>("/Sleepy_Bud.png.png");
           {/* Dialogue Box (spans both columns on md+) */}
           {/* Dialogue Box (spans both columns on md+) */}
           <div className="md:col-span-2 mt-4 space-y-4">
-            {/* Undertale-style dialogue box */}
-            <div className="w-full border-4 border-white bg-black p-4 text-2xl leading-relaxed min-h-[160px]">
-              {messages.length === 0 ? (
+                      {/* Undertale-style dialogue box */}
+            <div className="w-full border-4 border-white bg-black p-4 text-2xl leading-relaxed min-h-[180px]">
+              {turns.length === 0 || activeTurnIndex < 0 ? (
                 <span className="text-gray-400">
                   Bud is waiting for your question...
                 </span>
               ) : (
-                <div className="space-y-1">
-                  {messages.map((m: ChatMessage, index: number) => {
-                    const isLastAssistant: boolean =
-                      m.role === "assistant" && index === lastAssistantIndex;
+                <div className="space-y-3">
+                  {/* nav row */}
+                  <div className="flex items-center justify-between text-xl mb-2">
+                    <button
+                      type="button"
+                      onClick={(): void =>
+                        setActiveTurnIndex((prev: number): number =>
+                          Math.max(0, prev - 1)
+                        )
+                      }
+                      disabled={activeTurnIndex <= 0}
+                      className="px-2 py-1 border border-white disabled:opacity-40"
+                    >
+                      ◀
+                    </button>
+                    <span>
+                      Turn {activeTurnIndex + 1} / {turns.length}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={(): void =>
+                        setActiveTurnIndex((prev: number): number =>
+                          Math.min(turns.length - 1, prev + 1)
+                        )
+                      }
+                      disabled={activeTurnIndex >= turns.length - 1}
+                      className="px-2 py-1 border border-white disabled:opacity-40"
+                    >
+                      ▶
+                    </button>
+                  </div>
 
-                    const textToShow: string =
-                      isLastAssistant && isTyping ? displayedText : m.text;
+                  {/* active turn display */}
+                  {(() => {
+                    const turn: ChatTurn = turns[activeTurnIndex];
 
                     return (
-                      <div
-                        key={index}
-                        className={`whitespace-pre-wrap ${
-                          m.role === "user" ? "text-green-300" : "text-blue-300"
-                        }`}
-                      >
-                        <span className="mr-2">
-                          {m.role === "user" ? "YOU ►" : "BUD ►"}
-                        </span>
-                        {textToShow}
+                      <div className="space-y-2">
+                        <div className="whitespace-pre-wrap text-green-300">
+                          <span className="mr-2">YOU ►</span>
+                          {turn.question}
+                        </div>
+                        <div className="whitespace-pre-wrap text-blue-300">
+                          <span className="mr-2">BUD ►</span>
+                          {/* if we're currently typing this answer, use displayedText */}
+                          {isTyping && activeTurnIndex === turns.length - 1
+                            ? displayedText
+                            : turn.answer}
+                        </div>
                       </div>
                     );
-                  })}
+                  })()}
                 </div>
               )}
             </div>
 
-            {/* Input form stays the same */}
+
             <form
               onSubmit={handleAskBud}
               className="flex items-center gap-3 w-full"
@@ -423,6 +573,62 @@ const [budState, setBudState] = useState<string>("/Sleepy_Bud.png.png");
                 {isLoading ? "..." : "SEND"}
               </button>
             </form>
+                        {/* Places panel */}
+            <div className="mt-4 w-full border-4 border-white bg-black p-4 text-xl">
+              <div className="flex flex-wrap items-center gap-3 mb-3">
+                <span className="text-2xl">IRL HELP ►</span>
+                <span className="text-lg">ZIP:</span>
+                <input
+                  value={zip}
+                  onChange={(e): void => setZip(e.target.value)}
+                  className="bg-black border border-white px-2 py-1 text-lg w-28"
+                  maxLength={10}
+                />
+                <button
+                  type="button"
+                  onClick={handleFindPlaces}
+                  disabled={isFindingPlaces || messages.length === 0}
+                  className="border-2 border-white px-3 py-1 text-lg hover:bg-white hover:text-black disabled:opacity-40 disabled:hover:bg-black disabled:hover:text-white"
+                >
+                  {isFindingPlaces ? "SEARCHING..." : "FIND PLACES NEAR ME"}
+                </button>
+              </div>
+
+              <div className="text-sm text-gray-300 mb-2">
+                {lastNeed
+                  ? `Last detected need: ${lastNeed}`
+                  : "Ask Bud about a problem, then use this to find real-world places that could help."}
+              </div>
+
+              {places.length === 0 ? (
+                <div className="text-sm text-gray-500">
+                  No places loaded yet.
+                </div>
+              ) : (
+                <ol className="list-decimal pl-5 space-y-2 text-base">
+                  {places.map((p: Place) => (
+                    <li key={p.placeId}>
+                      <div className="font-bold">{p.name}</div>
+                      <div>{p.address}</div>
+                      {p.rating !== undefined && (
+                        <div>
+                          rating: {p.rating} ⭐ ({p.userRatingsTotal ?? 0} reviews)
+                        </div>
+                      )}
+                      <a
+                        href={p.mapsUrl}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="underline"
+                      >
+                        VIEW ON MAPS
+                      </a>
+                    </li>
+                  ))}
+                </ol>
+              )}
+            </div>
+
           </div>
         </div>
       </main>
