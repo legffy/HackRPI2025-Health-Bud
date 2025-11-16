@@ -1,5 +1,17 @@
 "use client";
-import React, { useState } from "react";
+import React, { useState, useEffect, useMemo} from "react";
+
+
+type HealthStatus = "green" | "yellow" | "red";
+
+type StatsSnapshot = {
+  user: UserStats;
+  derived: DerivedStats;
+};
+type StatsPanelProps = {
+  onStatusChange?: (status: HealthStatus) => void;
+  onStatsChange?: (snapshot: StatsSnapshot) => void;
+};
 
 type UserStats = {
   name: string;
@@ -111,13 +123,41 @@ function computeDerivedStats(user: UserStats): DerivedStats {
     energy,
   };
 
-  // Debug: prove it's recomputing
-  console.log("computeDerivedStats: user =", user, "derivded =", derived);
 
   return derived;
 }
+function computeHealthStatus(
+  user: UserStats,
+  derived: DerivedStats
+): HealthStatus {
+  let score: number = 0;
 
-export default function StatsPanel() {
+  // BMI contribution
+  if (derived.bmi.status.toLowerCase() === "normal") score += 1;
+  else if (
+    derived.bmi.status.toLowerCase() === "overweight" ||
+    derived.bmi.status.toLowerCase() === "underweight"
+  )
+    score += 0;
+  else score -= 1; // obese
+
+  // Diet contribution
+  const diet: string = user.diet.toLowerCase();
+  if (diet === "good") score += 1;
+  else if (diet === "ok") score += 0;
+  else if (diet === "bad") score -= 1;
+
+  // Energy contribution
+  if (derived.energy >= 0.7) score += 1;
+  else if (derived.energy <= 0.4) score -= 1
+
+  // Map score → status
+  if (score >= 2) return "green";
+  if (score <= -1) return "red";
+  return "yellow";
+}
+
+export default function StatsPanel({ onStatusChange, onStatsChange }: StatsPanelProps) {
   const [userstats, changeStats] = useState<UserStats>({
     name: "",
     age: 20,
@@ -135,9 +175,27 @@ export default function StatsPanel() {
     diet: false,
     goal: false,
   });
+const derivedstats: DerivedStats = useMemo(
+  (): DerivedStats => computeDerivedStats(userstats),
+  [userstats]
+);
 
-  // ❗ No state, no useEffect – derive every render
-  const derivedstats: DerivedStats = computeDerivedStats(userstats);
+const status: HealthStatus = useMemo(
+  (): HealthStatus => computeHealthStatus(userstats, derivedstats),
+  [userstats, derivedstats]
+);
+
+useEffect((): void => {
+  if (onStatusChange) {
+    onStatusChange(status);
+  }
+  if (onStatsChange) {
+    onStatsChange({
+      user: userstats,
+      derived: derivedstats,
+    });
+  }
+}, [status, userstats, derivedstats, onStatusChange, onStatsChange]);
 
   const clickedForm = (event: React.MouseEvent<HTMLButtonElement>): void => {
     const field = event.currentTarget.name as keyof UserStatsSelect;
@@ -411,31 +469,27 @@ export default function StatsPanel() {
             />{" "}
           </div>
         </div>
-        <div>
-          Daily Calories: {derivedstats.calories} kcal{" "}
+        <div className="flex">
+          <span>Daily Calories: {derivedstats.calories} kcal </span>
           <img
             src="/Pixel Art/Fire (Calorie)-1.png.png"
             className="h-10 w-10"
           />
         </div>
-        <div>
-          Sleep Target: {derivedstats.sleep[0]}–{derivedstats.sleep[1]} hrs{" "}
+        <div className="flex">
+          <span>
+            Sleep Target: {derivedstats.sleep[0]}–{derivedstats.sleep[1]} hrs{" "}
+          </span>
           <img src="/Pixel Art/Sleep-1.png.png" className="h-10 w-10" />
         </div>
-        <div>
-          Water Goal: {derivedstats.water} L{" "}
+        <div className="flex">
+          <span>Water Goal: {derivedstats.water} L </span>
           <img src="/Pixel Art/Water-1.png.png" className="h-10 w-10" />
         </div>
-        <div className="mt-2">
+        <div className="mt-2 flex">
           Energy:
-          <span className="ml-2">
-            {energyBar}{" "}
-            <img
-              src="/Pixel Art/Energy-1.png.png"
-              className="h-10 w-10"
-              alt=""
-            />
-          </span>
+          <span className="ml-2">{energyBar} </span>
+          <img src="/Pixel Art/Energy-1.png.png" className="h-10 w-10" alt="" />
         </div>
       </div>
     </div>
